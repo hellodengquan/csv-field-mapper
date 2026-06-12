@@ -1,0 +1,23 @@
+{
+  "name": "csv-field-mapper",
+  "version": "1.0.0",
+  "description": "CSV 字段映射工具，支持匹配预览、冲突提示和 JSON 结果导出",
+  "type": "module",
+  "bin": {
+    "csv-mapper": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.4",
+    "commander": "^12.1.0",
+    "csv-parse": "^5.5.6",
+    "string-similarity": "^4.0.4"
+  },
+  "devDependencies": {
+    "eslint": "^9.6.0"
+  }
+}

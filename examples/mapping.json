@@ -1,0 +1,8 @@
+{
+  "姓名": "name",
+  "年龄": "age",
+  "邮箱": "email",
+  "部门": "department",
+  "入职日期": "hire_date",
+  "薪资": "salary"
+}
