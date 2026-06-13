@@ -49,7 +49,9 @@ program
       }
       console.log(chalk.gray(`目标字段 (${targetFields.length}): ${targetFields.join(', ')}\n`));
 
-      let mappings = autoMatch(sourceFields, targetFields, opts.threshold);
+      const matchResult = autoMatch(sourceFields, targetFields, { threshold: opts.threshold });
+      let mappings = matchResult.mappings;
+      const matchConflicts = matchResult.conflicts;
 
       if (opts.mapping) {
         const manualContent = await readFile(opts.mapping, 'utf-8');
@@ -58,7 +60,7 @@ program
         mappings = applyManualMappings(mappings, manualMap);
       }
 
-      const conflicts = detectConflicts(mappings, sourceFields);
+      const conflicts = detectConflicts(mappings, sourceFields, matchConflicts);
 
       if (opts.preview !== false) {
         const sampleData = await readCsvSample(opts.source, 5);
@@ -148,7 +150,8 @@ program
         targetFields = opts.target.split(',').map(f => f.trim()).filter(Boolean);
       }
 
-      const mappings = autoMatch(sourceFields, targetFields);
+      const matchResult = autoMatch(sourceFields, targetFields);
+      const mappings = matchResult.mappings;
       const template = {};
       for (const m of mappings) {
         if (m.source) {

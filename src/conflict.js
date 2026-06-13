@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-export function detectConflicts(mappings, sourceFields) {
+export function detectConflicts(mappings, sourceFields, matchConflicts = {}) {
   const warnings = [];
   const errors = [];
 
@@ -36,10 +36,14 @@ export function detectConflicts(mappings, sourceFields) {
 
   const unmappedTargets = mappings.filter(m => !m.source);
   for (const m of unmappedTargets) {
+    const msgSuffix = m.candidates && m.candidates.length > 0
+      ? ` (候选: ${m.candidates.join(', ')})`
+      : '';
     warnings.push({
       type: 'missing_mapping',
-      message: `目标字段 "${m.target}" 没有匹配的源字段`,
+      message: `目标字段 "${m.target}" 没有匹配的源字段${msgSuffix}`,
       target: m.target,
+      candidates: m.candidates || [],
     });
   }
 
@@ -51,6 +55,29 @@ export function detectConflicts(mappings, sourceFields) {
       source: m.source,
       target: m.target,
       confidence: m.confidence,
+    });
+  }
+
+  const ambiguousMatches = matchConflicts.ambiguousMatches || [];
+  for (const conflict of ambiguousMatches) {
+    warnings.push({
+      type: 'normalized_ambiguous',
+      message: `目标字段 "${conflict.target}" 存在多个规范化匹配的源字段: ${conflict.candidates.map(s => `"${s}"`).join(', ')} (当前选中: "${conflict.selected}")`,
+      target: conflict.target,
+      normalizedName: conflict.normalizedName,
+      candidates: conflict.candidates,
+      selected: conflict.selected,
+    });
+  }
+
+  const duplicateTargets = matchConflicts.duplicateTargets || [];
+  for (const conflict of duplicateTargets) {
+    warnings.push({
+      type: 'normalized_target_duplicate',
+      message: `多个目标字段规范化后相同 (${conflict.normalizedName}): ${conflict.targets.map(t => `"${t}"`).join(', ')}, 可能造成映射歧义`,
+      normalizedName: conflict.normalizedName,
+      targets: conflict.targets,
+      sourceCandidates: conflict.sourceCandidates,
     });
   }
 

@@ -11,12 +11,18 @@ export async function exportMappingResult(mappings, conflicts, options = {}) {
       matchedCount: mappings.filter(m => m.source).length,
       unmappedCount: mappings.filter(m => !m.source).length,
     },
-    mappings: mappings.map(m => ({
-      source: m.source || null,
-      target: m.target,
-      method: m.method,
-      confidence: m.confidence,
-    })),
+    mappings: mappings.map(m => {
+      const entry = {
+        source: m.source || null,
+        target: m.target,
+        method: m.method,
+        confidence: m.confidence,
+      };
+      if (m.candidates && m.candidates.length > 0) {
+        entry.candidates = m.candidates;
+      }
+      return entry;
+    }),
     conflicts: {
       errors: conflicts.errors,
       warnings: conflicts.warnings,
