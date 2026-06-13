@@ -8,6 +8,7 @@ import { previewMappings } from './preview.js';
 import { detectConflicts, reportConflicts } from './conflict.js';
 import { exportMappingResult, exportTransformedData } from './exporter.js';
 import { readFile } from 'fs/promises';
+import { loadHistory, recordMappings, clearHistory, getHistoryPath } from './history.js';
 
 const program = new Command();
 
@@ -27,6 +28,9 @@ program
   .option('-d, --data-output <path>', '导出转换后的数据到 JSON 文件')
   .option('--threshold <number>', '模糊匹配阈值 (0-1)', parseFloat, 0.6)
   .option('--no-preview', '跳过预览直接导出')
+  .option('--no-history', '不使用历史记忆，也不记录')
+  .option('--no-save-history', '使用历史记忆但不保存本次结果')
+  .option('--history-path <path>', '自定义历史记录文件路径')
   .action(async (opts) => {
     try {
       if (!opts.target && !opts.targetCsv) {
@@ -49,9 +53,18 @@ program
       }
       console.log(chalk.gray(`目标字段 (${targetFields.length}): ${targetFields.join(', ')}\n`));
 
-      const matchResult = autoMatch(sourceFields, targetFields, { threshold: opts.threshold });
+      const historyMap = opts.noHistory ? new Map() : await loadHistory(opts.historyPath);
+      if (!opts.noHistory && historyMap.size > 0) {
+        console.log(chalk.magenta(`💾 已加载历史记忆: ${historyMap.size} 条记录`));
+      }
+
+      const matchResult = autoMatch(sourceFields, targetFields, { threshold: opts.threshold, historyMap });
       let mappings = matchResult.mappings;
       const matchConflicts = matchResult.conflicts;
+
+      if (matchResult.resolvedByHistory && matchResult.resolvedByHistory.length > 0) {
+        console.log(chalk.magenta(`✨ 历史记忆自动解析 ${matchResult.resolvedByHistory.length} 个歧义映射`));
+      }
 
       if (opts.mapping) {
         const manualContent = await readFile(opts.mapping, 'utf-8');
@@ -84,6 +97,13 @@ program
       if (opts.dataOutput) {
         const records = await readCsvRecords(opts.source);
         await exportTransformedData(records, mappings, opts.dataOutput);
+      }
+
+      if (!opts.noHistory && !opts.noSaveHistory) {
+        const recordResult = await recordMappings(mappings, opts.historyPath);
+        if (recordResult.updated > 0) {
+          console.log(chalk.magenta(`\n💾 已记录 ${recordResult.updated} 条映射到历史记忆 (共 ${recordResult.total} 条)`));
+        }
       }
     } catch (err) {
       console.error(chalk.red(`\n❌ 错误: ${err.message}`));
@@ -163,6 +183,24 @@ program
       await writeFile(opts.output, JSON.stringify(template, null, 2), 'utf-8');
       console.log(chalk.green(`✅ 映射模板已生成: ${opts.output}`));
       console.log(chalk.gray('编辑此文件后，使用 --mapping 参数指定即可覆盖自动匹配结果'));
+    } catch (err) {
+      console.error(chalk.red(`\n❌ 错误: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('reset-history')
+  .description('清空历史映射记忆')
+  .option('--history-path <path>', '自定义历史记录文件路径')
+  .action(async (opts) => {
+    try {
+      const result = await clearHistory(opts.historyPath);
+      if (result.cleared) {
+        console.log(chalk.green(`✅ 历史记忆已清空: ${result.path}`));
+      } else {
+        console.log(chalk.yellow(`ℹ️  历史记忆文件不存在，无需清空: ${result.path}`));
+      }
     } catch (err) {
       console.error(chalk.red(`\n❌ 错误: ${err.message}`));
       process.exit(1);

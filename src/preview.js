@@ -20,6 +20,7 @@ export function previewMappings(mappings, sampleData = []) {
       normalized: chalk.cyan('规整'),
       fuzzy: chalk.yellow('模糊'),
       manual: chalk.blue('手动'),
+      history: chalk.magenta('记忆'),
       none: chalk.red('未匹配'),
     }[m.method] || m.method;
 
