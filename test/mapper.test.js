@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { normalizeFieldName, autoMatch, applyManualMappings } from '../src/mapper.js';
 import {
-  loadHistory, saveHistory, recordMappings, clearHistory, resolveFromHistory, getHistoryPath,
+  loadHistory, saveHistory, recordMappings, clearHistory, resolveFromHistory, getHistoryPath, listNamespaces,
 } from '../src/history.js';
 
 const TMP_DIR = join(process.cwd(), '.test-tmp');
@@ -141,18 +141,20 @@ describe('autoMatch 冲突候选输出', () => {
   });
 });
 
-describe('history 候选选择记忆', () => {
+describe('history 候选选择记忆（带 namespace）', () => {
   const histPath = () => join(TMP_DIR, 'h.json');
+  const NS = 'bi-employee-report';
 
-  test('首次歧义后写入 history', async () => {
+  test('首次歧义后写入 history（带 namespace）', async () => {
     const source = ['userName', 'user_name'];
     const target = ['user-name'];
     const result = autoMatch(source, target);
 
-    const r = await recordMappings(result.mappings, histPath());
+    const r = await recordMappings(result.mappings, histPath(), NS);
     assert.ok(r.updated >= 1, '应记录至少 1 条');
+    assert.equal(r.namespace, NS);
 
-    const loaded = await loadHistory(histPath());
+    const loaded = await loadHistory(histPath(), NS);
     const entry = Array.from(loaded.entries()).find(([s, t]) => t === 'user-name');
     assert.ok(entry, '应存在 user-name → 某源字段 的历史记录');
   });
@@ -162,10 +164,10 @@ describe('history 候选选择记忆', () => {
     const target = ['user-name'];
 
     const first = autoMatch(source, target);
-    await recordMappings(first.mappings, histPath());
+    await recordMappings(first.mappings, histPath(), NS);
     const firstSelected = first.mappings[0].source;
 
-    const historyMap = await loadHistory(histPath());
+    const historyMap = await loadHistory(histPath(), NS);
     const second = autoMatch(source, target, { historyMap });
 
     const m = second.mappings.find(x => x.target === 'user-name');
@@ -199,31 +201,165 @@ describe('history 候选选择记忆', () => {
     assert.equal(resolveFromHistory([], 'EmailAddress', history), null);
   });
 
-  test('--reset-history 功能等价：clearHistory 成功清空记忆', async () => {
-    const customPath = join(TMP_DIR, 'my-history.json');
-    await writeFile(customPath, JSON.stringify({
-      updatedAt: new Date().toISOString(),
-      mappings: { foo: 'bar', baz: 'qux' },
-    }));
+  test('clearHistory 带 namespace 清空单一模板', async () => {
+    const customPath = histPath();
+    const mappings = [
+      { source: 'a', target: 'A', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings, customPath, 'template-x');
+    await recordMappings(mappings, customPath, 'template-y');
 
-    const before = await loadHistory(customPath);
-    assert.equal(before.size, 2);
+    const result = await clearHistory(customPath, 'template-x');
+    assert.equal(result.cleared, true);
+    assert.equal(result.namespace, 'template-x');
 
-    const clearResult = await clearHistory(customPath);
-    assert.equal(clearResult.cleared, true);
-    assert.equal(clearResult.path, customPath);
+    const remainY = await loadHistory(customPath, 'template-y');
+    assert.equal(remainY.size, 1, 'template-y 应保留');
 
-    const after = await loadHistory(customPath);
-    assert.equal(after.size, 0, '清空后应无历史');
+    const clearedX = await loadHistory(customPath, 'template-x');
+    assert.equal(clearedX.size, 0, 'template-x 应已清空');
+  });
 
-    const again = await clearHistory(customPath);
-    assert.equal(again.cleared, false);
-    assert.equal(again.reason, 'not_exists');
+  test('clearHistory 不带 namespace 清空全部', async () => {
+    const customPath = histPath();
+    const mappings = [
+      { source: 'a', target: 'A', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings, customPath, 'ns-a');
+    await recordMappings(mappings, customPath, 'ns-b');
+
+    const result = await clearHistory(customPath, null);
+    assert.equal(result.cleared, true);
+    assert.equal(result.namespace, null);
+
+    const afterA = await loadHistory(customPath, 'ns-a');
+    const afterB = await loadHistory(customPath, 'ns-b');
+    assert.equal(afterA.size, 0, 'ns-a 应已清空');
+    assert.equal(afterB.size, 0, 'ns-b 应已清空');
   });
 
   test('clearHistory 使用默认路径时返回项目根路径', () => {
     const p = getHistoryPath();
     assert.ok(p.endsWith('.mapper-history.json'));
+  });
+
+  test('clearHistory 清空不存在的 namespace 返回 namespace_not_exists', async () => {
+    const customPath = histPath();
+    const mappings = [
+      { source: 'a', target: 'A', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings, customPath, 'existing-ns');
+
+    const result = await clearHistory(customPath, 'nonexistent-ns');
+    assert.equal(result.cleared, false);
+    assert.equal(result.reason, 'namespace_not_exists');
+  });
+});
+
+describe('namespace 隔离 - 不同模板互不干扰', () => {
+  const histPath = () => join(TMP_DIR, 'ns-isolation.json');
+
+  test('不同模板的 history 互不干扰', async () => {
+    const source = ['userName', 'user_name'];
+    const target = ['user-name'];
+
+    const result1 = autoMatch(source, target);
+    await recordMappings(result1.mappings, histPath(), 'bi-employee');
+
+    const historyMapEmp = await loadHistory(histPath(), 'bi-employee');
+    assert.equal(historyMapEmp.size, 1, 'bi-employee 应有 1 条记录');
+
+    const historyMapSales = await loadHistory(histPath(), 'bi-sales');
+    assert.equal(historyMapSales.size, 0, 'bi-sales 应为空');
+
+    const salesMappings = [
+      { source: 'userName', target: 'SalesName', method: 'manual', confidence: 1 },
+    ];
+    await recordMappings(salesMappings, histPath(), 'bi-sales');
+
+    const historyMapEmp2 = await loadHistory(histPath(), 'bi-employee');
+    const historyMapSales2 = await loadHistory(histPath(), 'bi-sales');
+    assert.equal(historyMapEmp2.size, 1, 'bi-employee 仍为 1 条，未被覆盖');
+    assert.equal(historyMapSales2.get('userName'), 'SalesName', 'bi-sales 有自己的映射');
+    assert.equal(historyMapEmp2.get('userName'), 'user-name', 'bi-employee 的映射未变');
+  });
+
+  test('清空单一模板时只删除对应 namespace', async () => {
+    const customPath = histPath();
+    const mappings = [
+      { source: 'a', target: 'A', method: 'normalized', confidence: 1 },
+      { source: 'b', target: 'B', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings, customPath, 'keep-this');
+    await recordMappings(mappings, customPath, 'delete-this');
+
+    await clearHistory(customPath, 'delete-this');
+
+    const kept = await loadHistory(customPath, 'keep-this');
+    assert.equal(kept.size, 2, 'keep-this 应完整保留');
+
+    const deleted = await loadHistory(customPath, 'delete-this');
+    assert.equal(deleted.size, 0, 'delete-this 应已清空');
+
+    const raw = JSON.parse(await readFile(customPath, 'utf-8'));
+    assert.ok(raw.namespaces['keep-this'], '文件中 keep-this 应存在');
+    assert.equal(raw.namespaces['delete-this'], undefined, '文件中 delete-this 应已移除');
+  });
+
+  test('不带参数清空全部历史记录', async () => {
+    const customPath = histPath();
+    const mappings = [
+      { source: 'x', target: 'X', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings, customPath, 'ns-1');
+    await recordMappings(mappings, customPath, 'ns-2');
+    await recordMappings(mappings, customPath, 'ns-3');
+
+    const result = await clearHistory(customPath, null);
+    assert.equal(result.cleared, true);
+
+    for (const ns of ['ns-1', 'ns-2', 'ns-3']) {
+      const loaded = await loadHistory(customPath, ns);
+      assert.equal(loaded.size, 0, `${ns} 应已清空`);
+    }
+  });
+
+  test('listNamespaces 列出所有模板及记录数', async () => {
+    const customPath = histPath();
+    const mappings1 = [
+      { source: 'a', target: 'A', method: 'normalized', confidence: 1 },
+    ];
+    const mappings2 = [
+      { source: 'x', target: 'X', method: 'normalized', confidence: 1 },
+      { source: 'y', target: 'Y', method: 'normalized', confidence: 1 },
+    ];
+    await recordMappings(mappings1, customPath, 'alpha');
+    await recordMappings(mappings2, customPath, 'beta');
+
+    const list = await listNamespaces(customPath);
+    assert.equal(list.length, 2);
+    const alpha = list.find(n => n.namespace === 'alpha');
+    const beta = list.find(n => n.namespace === 'beta');
+    assert.equal(alpha.count, 1);
+    assert.equal(beta.count, 2);
+  });
+
+  test('同一源字段在不同 namespace 映射到不同目标', async () => {
+    const customPath = histPath();
+
+    await recordMappings([
+      { source: 'userName', target: 'EmployeeName', method: 'manual', confidence: 1 },
+    ], customPath, 'hr-report');
+
+    await recordMappings([
+      { source: 'userName', target: 'CustomerName', method: 'manual', confidence: 1 },
+    ], customPath, 'crm-report');
+
+    const hr = await loadHistory(customPath, 'hr-report');
+    const crm = await loadHistory(customPath, 'crm-report');
+
+    assert.equal(hr.get('userName'), 'EmployeeName');
+    assert.equal(crm.get('userName'), 'CustomerName');
   });
 });
 
